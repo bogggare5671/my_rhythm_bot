@@ -22,8 +22,8 @@ void setup() {
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0,0);
-  lcd.printCyrillic("P" "\x098" "\x09F" "\x09C" "-" "\x080" "o" "\x09F", 4, 0);
-  lcd.printCyrillic("\x081" "OTOB", 5, 1);  // ASCII-сообщение, потом попадёт из Python
+  lcd.printCyrillic("\x085" "H" "\x085" "\x0A9" "\x085" "A" "\x087" "\x085" "\x084" "A" "\x0A9" "\x085" "\x091",0,0);  // ASCII-сообщение, потом попадёт из Python
+  lcd.printCyrillic("\x084" "A" "\x088" "\x089" "CKA",0,1);
 /* Коды символов
 Б \x080
 Г \x081

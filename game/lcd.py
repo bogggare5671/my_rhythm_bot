@@ -1,4 +1,5 @@
 from .serial_io import send_lcd
+import time
 
 # Карта UTF-8 → CP1251 для LiquidCrystal_I2C_Cyrillic
 RU_MAP = {
@@ -15,17 +16,18 @@ RU_MAP = {
 # Таблица «кириллица → латиница» для букв-«двойников»
 ASCII_EQUIV = {
     'А': 'A','В': 'B','Е': 'E','К': 'K','М': 'M','Н': 'H',
-    'О': 'O','Р': 'P','С': 'S','Т': 'T','Х': 'X',
+    'О': 'O','Р': 'P','С': 'C','Т': 'T','Х': 'X',
     'а': 'a','в': 'b','е': 'e','к': 'k','м': 'm','н': 'h',
-    'о': 'o','р': 'p','с': 's','т': 't','х': 'x'
+    'о': 'o','р': 'p','с': 'c','т': 't','х': 'x'
 }
+
 
 def rus_to_lcd(s: str) -> bytes:
     """
     Преобразует UTF-8 строку в байты:
-     • символы из RU_MAP → специальные коды (0x80–0xAE)
-     • символы из ASCII_EQUIV → латинские эквиваленты
-     • остальное (ASCII, цифры, знаки) остаётся без изменений
+     • RU_MAP → специальные коды (0x80–0xAE)
+     • ASCII_EQUIV → латинские эквиваленты
+     • остальные ASCII-символы без изменений
     """
     out = bytearray()
     for ch in s:
@@ -34,17 +36,28 @@ def rus_to_lcd(s: str) -> bytes:
         elif ch in ASCII_EQUIV:
             out += ASCII_EQUIV[ch].encode('ascii')
         else:
-            # оставляем только ASCII-диапазон
             b = ch.encode('ascii', errors='ignore')
             if b:
                 out += b
     return bytes(out)
 
+
 def lcd(text: str):
     """
-    Отправляет на Arduino команду вида
+    Отправляет на Arduino команду вида:
       LCD <payload>\n
-    где payload — результат rus_to_lcd(text)
+    где payload — результат rus_to_lcd(text).
+    Логирует в терминал.
     """
+    # очистка экрана (обрабатывается на Arduino)
+    send_lcd(b"LCD CLEAR\n")
+    time.sleep(0.05)
+
+    # подготовка и отправка текста
     payload = rus_to_lcd(text)
-    send_lcd(payload)
+    cmd = b"LCD " + payload + b"\n"
+    send_lcd(cmd)
+    time.sleep(0.05)
+
+    # лог в терминал
+    print(f"[LCD] {text}")

@@ -5,7 +5,7 @@ import random
 import json
 
 from .config import (
-    LEVELS_PATH, SOUND_FOLDER,
+    LEVELS_PATH,
     TIMEOUT_SECONDS, TIMING_TOLERANCE,
     SESSION_LIMIT, AFTER_LEVEL_PAUSE
 )
@@ -16,86 +16,102 @@ from .serial_io import (
 from .lcd import lcd
 from .audio import play_sound
 
-
 def load_levels():
     with open(LEVELS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def wait_for_start():
-    """
-    Ждём, пока пользователь нажмёт RESET (START) на Arduino.
-    При этом выводим приглашение на LCD.
-    """
+    """Ждём RESET (START) от Arduino; дублируем в терминал."""
     lcd("Нажми СТАРТ")
     while True:
-        line = read_line()
-        if line == "RESET":
+        if read_line() == "RESET":
             lcd("Новый игрок!")
             return
 
-
-def wait_for_input(expected_pattern):
+def wait_for_input(pattern, sound_map):
     """
-    Считывает нажатия кнопок, пока не будет столько же,
-    сколько шагов в expected_pattern.
-    Возвращает "OK", "WRONG", "TIMEOUT" или "RESET".
+    Считывает нажатия до длины pattern.
+    - Первая пауза до первого нажатия не проверяется.
+    - Проверяем интервалы между 2-м и далее нажатиями.
+    Возвращает: "OK", "WRONG", "TIMEOUT" или "RESET".
     """
     result = []
     times = []
-    start_time = time.time()
+    start_time = None
 
-    while len(result) < len(expected_pattern):
-        # таймаут
-        if time.time() - start_time > TIMEOUT_SECONDS:
-            return "TIMEOUT"
-
+    # Слушаем до тех пор, пока не наберём нужное число нажатий
+    while len(result) < len(pattern):
         line = read_line()
-        if line.startswith("BTN"):
-            btn = int(line.split()[1])
-            now = time.time()
+        if not line:
+            continue
 
-            result.append(btn)
-            times.append(now)
-            # звук по нажатию
-            play_sound(f"{btn}.wav")
+        # Полезный лог в терминал
+        print(f"[RAW BTN] '{line}'")
 
-            if len(result) == 1:
-                # сброс таймера после первого нажатия
-                start_time = now
-
-        elif line == "RESET":
+        # RESET прерывает ввод
+        if line == "RESET":
             return "RESET"
 
-    # проверяем интервалы
-    deltas = [times[i + 1] - times[i] for i in range(len(times) - 1)]
-    expected_deltas = [step[1] for step in expected_pattern][:-1]
+        parts = line.strip().split()
+        # Должно быть минимум два токена: BTN и номер
+        if len(parts) != 2 or parts[0] != "BTN":
+            continue
 
-    for i, (got, exp) in enumerate(zip(deltas, expected_deltas), start=1):
-        if abs(got - exp) > exp * TIMING_TOLERANCE:
+        # Пробуем распарсить номер кнопки
+        try:
+            btn = int(parts[1])
+        except ValueError:
+            continue
+
+        now = time.time()
+        # Устанавливаем стартовый таймер после первого клика
+        if start_time is None:
+            start_time = now
+
+        # Глобальный таймаут от первого клика
+        if now - start_time > TIMEOUT_SECONDS:
+            return "TIMEOUT"
+
+        # Сохраняем результат и время
+        result.append(btn)
+        times.append(now)
+
+        # Звуковой отклик
+        play_sound(sound_map.get(str(btn), f"{btn}.wav"))
+        print(f"[INPUT] BTN {btn}")
+
+    # Проверка интервалов между нажатиями (начиная со второго)
+    deltas = [times[i] - times[i-1] for i in range(1, len(times))]
+    expected_deltas = [step[1] for step in pattern][1:]
+    for got, exp in zip(deltas, expected_deltas):
+        print(f"[TIMING] got={got:.2f}s, exp={exp:.2f}s")
+        if exp > 0 and abs(got - exp) > exp * TIMING_TOLERANCE:
             lcd("Ошибка ритма!")
+            print("[ERROR] Rhythm mismatch")
             return "WRONG"
 
-    # проверяем последовательность кнопок
-    if result == [step[0] for step in expected_pattern]:
-        return "OK"
+    # Проверка правильности последовательности
+    expected_buttons = [step[0] for step in pattern]
+    print(f"[RESULT] expected={expected_buttons}, got={result}")
+    if result != expected_buttons:
+        lcd("Ошибка последовательности!")
+        print("[ERROR] Sequence mismatch")
+        return "WRONG"
 
-    lcd("Ошибка!")
-    return "WRONG"
-
+    return "OK"
 
 def run_game():
     levels = load_levels()
     lcd("Ритм-Бот готов")
+    lcd("Нажми CТАРТ")
 
     while True:
-        # старт новой сессии
         wait_for_start()
         session_start = time.time()
         level = 0
         flawless = True
+        restart = False
 
-        # прогон всех уровней
         while level < len(levels):
             if time.time() - session_start > SESSION_LIMIT:
                 lcd("Время вышло")
@@ -103,32 +119,30 @@ def run_game():
                 break
 
             current = levels[level]
-            name = current["name"]
-            pattern_variants = current["pattern_variants"]
-            sound_map = current["sounds"]
-
-            # выбираем и показываем уровень
-            lcd(name)
-            pattern = random.choice(pattern_variants)
+            lcd(current["name"])
+            pattern = random.choice(current["pattern_variants"])
+            print(f"[PATTERN] Level {level+1}: {pattern}")
 
             block_input()
             for btn, pause in pattern:
                 show(btn)
-                play_sound(sound_map[str(btn)])
+                play_sound(current["sounds"][str(btn)])
+                print(f"[SHOW] LED {btn}, pause={pause}")
                 time.sleep(pause)
                 led_off(btn)
+                print(f"[SHOW] LED OFF {btn}")
                 time.sleep(0.1)
             allow_input()
 
             lcd("Повтори ритм")
-            resp = wait_for_input(pattern)
+            print("[LCD] Повтори ритм")
+            resp = wait_for_input(pattern, current["sounds"])
 
             if resp == "RESET":
-                # сброс до первого уровня
-                level = 0
-                flawless = True
+                restart = True
                 break
             elif resp == "TIMEOUT":
+                lcd("Время ожидания")
                 flawless = False
                 break
             elif resp == "OK":
@@ -136,23 +150,22 @@ def run_game():
                 play_sound("success.wav")
                 time.sleep(AFTER_LEVEL_PAUSE)
                 level += 1
-            else:  # "WRONG"
-                lcd("Неверно!")
+            else:  # WRONG
                 play_sound("fail.wav")
                 time.sleep(AFTER_LEVEL_PAUSE)
                 flawless = False
 
-        # итоги сессии
+        if restart:
+            print("[RUN] Restart session")
+            continue
+
         if level == len(levels) and flawless:
             lcd("Все уровни!")
             lcd("Поздравляем!")
             prize()
             play_sound("prize.wav")
         else:
-            # если вышли раньше по ошибке или таймауту
             lcd("Без приза :(")
 
-
-# если кто-то хочет запустить именно эту функцию напрямую:
 if __name__ == "__main__":
     run_game()
