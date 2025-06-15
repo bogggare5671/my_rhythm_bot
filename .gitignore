@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Arduino
+*.hex
+*.elf
+*.o
+*.bin
+
+# Системные
+*.log
